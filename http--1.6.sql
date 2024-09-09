@@ -129,3 +129,42 @@ CREATE FUNCTION bytea_to_text(data BYTEA)
     AS 'MODULE_PATHNAME', 'bytea_to_text'
     LANGUAGE 'c'
     IMMUTABLE STRICT;
+
+CREATE TABLE @extschema@._http_crawl_plans(
+    id serial primary key,
+    name text not null
+);
+
+CREATE INDEX ON @extschema@._http_crawl_plans(name);
+
+CREATE TABLE @extschema@._http_pages(
+    id serial primary key,
+
+    req_method http_method,
+    req_uri text,
+    req_headers http_header[],
+    req_content_type text,
+    req_content text,
+
+    resp_status integer,
+    resp_content_type text,
+    resp_headers http_header[],
+    resp_content text,
+
+    fk_crawl_plan_id integer references @extschema@._http_crawl_plans(id)
+);
+
+CREATE FUNCTION sp_create_crawl_plan(plan_name text, variadic urls text[])
+    RETURNS integer LANGUAGE SQL AS $$
+    WITH plan AS (
+        -- Insert a new crawl plan and return its id
+        INSERT INTO @extschema@._http_crawl_plans(name)
+        VALUES (plan_name)
+        RETURNING id
+    )
+    -- Insert the URLs into the pages table
+    INSERT INTO @extschema@._http_pages(req_method, req_uri, fk_crawl_plan_id)
+    SELECT 'GET', url, (SELECT id FROM plan)
+    FROM unnest(urls) AS url
+    RETURNING id;
+$$;

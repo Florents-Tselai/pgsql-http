@@ -147,3 +147,10 @@ SELECT status FROM http_get('https://httpbun.org/status/555');
 -- the default (5s), but shorter than the new timeout
 SELECT http_set_curlopt('CURLOPT_TIMEOUT_MS', '10000');
 SELECT status FROM http_get('https://httpbun.org/delay/7');
+
+SELECT sp_create_crawl_plan('plan1', 'http://example.com', 'http://another.com');
+
+SELECT * from _http_crawl_plans;
+
+SELECT * from _http_pages;
+
