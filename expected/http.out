@@ -236,3 +236,22 @@ SELECT status FROM http_get('https://httpbun.org/delay/7');
     200
 (1 row)
 
+SELECT sp_create_crawl_plan('plan1', 'http://example.com', 'http://another.com');
+ sp_create_crawl_plan 
+----------------------
+                    1
+(1 row)
+
+SELECT * from _http_crawl_plans;
+ id | name  
+----+-------
+  1 | plan1
+(1 row)
+
+SELECT * from _http_pages;
+ id | req_method |      req_uri       | req_headers | req_content_type | req_content | resp_status | resp_content_type | resp_headers | resp_content | fk_crawl_plan_id 
+----+------------+--------------------+-------------+------------------+-------------+-------------+-------------------+--------------+--------------+------------------
+  1 | GET        | http://example.com |             |                  |             |             |                   |              |              |                1
+  2 | GET        | http://another.com |             |                  |             |             |                   |              |              |                1
+(2 rows)
+
