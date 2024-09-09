@@ -22,3 +22,4 @@ endif
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
+dev: clean all install installcheck
