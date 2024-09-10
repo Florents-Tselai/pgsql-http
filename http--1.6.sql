@@ -151,6 +151,7 @@ CREATE TABLE @extschema@._http_pages(
     resp_headers http_header[],
     resp_content text,
 
+    metadata jsonb,
     fk_crawl_plan_id integer references @extschema@._http_crawl_plans(id)
 );
 
@@ -168,3 +169,30 @@ CREATE FUNCTION sp_create_crawl_plan(plan_name text, variadic urls text[])
     FROM unnest(urls) AS url
     RETURNING id;
 $$;
+
+CREATE FUNCTION http_get(uri VARCHAR, logged boolean default false, metadata jsonb default null)
+    RETURNS http_response
+AS $$
+DECLARE
+request http_request;
+response http_response;
+BEGIN
+request := ('GET', uri, NULL, NULL, NULL)::@extschema@.http_request;
+response := @extschema@.http(request);
+IF logged THEN
+        INSERT INTO @extschema@._http_pages (
+            req_method, req_uri, req_headers, req_content_type, req_content,
+            resp_status, resp_content_type, resp_headers, resp_content,
+            metadata
+        )
+        VALUES (
+        (request).method, (request).uri, (request).headers, (request).content_type, (request).content,
+        (response).status, (request).content_type, (request).headers, (request).content,
+        metadata
+        );
+END IF;
+RETURN response;
+END;
+$$ LANGUAGE plpgsql;
+
+

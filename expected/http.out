@@ -9,11 +9,10 @@ SELECT http_set_curlopt('CURLOPT_TIMEOUT', '10');
 -- Status code
 SELECT status
 FROM http_get('https://httpbun.org/status/202');
- status 
---------
-    202
-(1 row)
-
+ERROR:  function http_get(unknown) is not unique
+LINE 2: FROM http_get('https://httpbun.org/status/202');
+             ^
+HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
 -- Headers
 SELECT lower(field) AS field, value
 FROM (
@@ -21,22 +20,20 @@ FROM (
 	FROM http_get('https://httpbun.org/response-headers?Abcde=abcde')
 ) a
 WHERE field ILIKE 'Abcde';
- field | value 
--------+-------
- abcde | abcde
-(1 row)
-
+ERROR:  function http_get(unknown) is not unique
+LINE 4:  FROM http_get('https://httpbun.org/response-headers?Abcde=a...
+              ^
+HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
 -- GET
 SELECT status,
 content::json->'args'->>'foo' AS args,
 content::json->'url' AS url,
 content::json->'method' AS method
 FROM http_get('https://httpbun.org/anything?foo=bar');
- status | args |                  url                   | method 
---------+------+----------------------------------------+--------
-    200 | bar  | "https://httpbun.org/anything?foo=bar" | "GET"
-(1 row)
-
+ERROR:  function http_get(unknown) is not unique
+LINE 5: FROM http_get('https://httpbun.org/anything?foo=bar');
+             ^
+HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
 -- GET with data
 SELECT status,
 content::json->'args'->>'this' AS args,
@@ -158,11 +155,10 @@ WHERE field ILIKE 'Abcde';
 SELECT status,
 content::json->'url' AS url
 FROM http_get('https://httpbun.org/redirect-to?url=get');
- status |            url            
---------+---------------------------
-    200 | "https://httpbun.org/get"
-(1 row)
-
+ERROR:  function http_get(unknown) is not unique
+LINE 3: FROM http_get('https://httpbun.org/redirect-to?url=get');
+             ^
+HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
 -- Request image
 WITH
   http AS (
@@ -176,11 +172,10 @@ SELECT
   length(text_to_bytea(http.content)) AS length_binary
 FROM http, headers
 WHERE field ilike 'Content-Type';
- content_type | length_binary 
---------------+---------------
- image/png    |          8090
-(1 row)
-
+ERROR:  function http_get(unknown) is not unique
+LINE 3:     SELECT * FROM http_get('https://httpbingo.org/image/png'...
+                          ^
+HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
 -- Alter options and and reset them and throw errors
 SELECT http_set_curlopt('CURLOPT_PROXY', '127.0.0.1');
  http_set_curlopt 
@@ -217,11 +212,10 @@ SELECT http_reset_curlopt();
 
 -- Now it should work
 SELECT status FROM http_get('https://httpbun.org/status/555');
- status 
---------
-    555
-(1 row)
-
+ERROR:  function http_get(unknown) is not unique
+LINE 1: SELECT status FROM http_get('https://httpbun.org/status/555'...
+                           ^
+HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
 -- Alter the default timeout and then run a query that is longer than
 -- the default (5s), but shorter than the new timeout
 SELECT http_set_curlopt('CURLOPT_TIMEOUT_MS', '10000');
@@ -231,11 +225,10 @@ SELECT http_set_curlopt('CURLOPT_TIMEOUT_MS', '10000');
 (1 row)
 
 SELECT status FROM http_get('https://httpbun.org/delay/7');
- status 
---------
-    200
-(1 row)
-
+ERROR:  function http_get(unknown) is not unique
+LINE 1: SELECT status FROM http_get('https://httpbun.org/delay/7');
+                           ^
+HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
 SELECT sp_create_crawl_plan('plan1', 'http://example.com', 'http://another.com');
  sp_create_crawl_plan 
 ----------------------
@@ -248,10 +241,17 @@ SELECT * from _http_crawl_plans;
   1 | plan1
 (1 row)
 
+SELECT (http_get('https://httpbun.org/status/202', true, '{"plan": "my"}')).status;
+ status 
+--------
+    202
+(1 row)
+
 SELECT * from _http_pages;
- id | req_method |      req_uri       | req_headers | req_content_type | req_content | resp_status | resp_content_type | resp_headers | resp_content | fk_crawl_plan_id 
-----+------------+--------------------+-------------+------------------+-------------+-------------+-------------------+--------------+--------------+------------------
-  1 | GET        | http://example.com |             |                  |             |             |                   |              |              |                1
-  2 | GET        | http://another.com |             |                  |             |             |                   |              |              |                1
-(2 rows)
+ id | req_method |            req_uri             | req_headers | req_content_type | req_content | resp_status | resp_content_type | resp_headers | resp_content |    metadata    | fk_crawl_plan_id 
+----+------------+--------------------------------+-------------+------------------+-------------+-------------+-------------------+--------------+--------------+----------------+------------------
+  1 | GET        | http://example.com             |             |                  |             |             |                   |              |              |                |                1
+  2 | GET        | http://another.com             |             |                  |             |             |                   |              |              |                |                1
+  3 | GET        | https://httpbun.org/status/202 |             |                  |             |         202 |                   |              |              | {"plan": "my"} |                 
+(3 rows)
 
