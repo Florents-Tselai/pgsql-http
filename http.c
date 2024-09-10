@@ -1405,420 +1405,100 @@ Datum http_request(PG_FUNCTION_ARGS)
 	PG_RETURN_DATUM(HeapTupleGetDatum(tuple_out));
 }
 
-Datum http_request_many(PG_FUNCTION_ARGS);
 PG_FUNCTION_INFO_V1(http_request_many);
-Datum http_request_many(PG_FUNCTION_ARGS)
+
+Datum http_request_many(PG_FUNCTION_ARGS);
+
+Datum
+http_request_many(PG_FUNCTION_ARGS)
 {
     /* Input */
-    HeapTupleHeader rec;
-    HeapTupleData tuple;
-    Oid tup_type;
-    int32 tup_typmod;
-    TupleDesc tup_desc;
-    int ncolumns;
-    Datum *values;
-    bool *nulls;
+    ArrayType  *requestsArray = PG_GETARG_ARRAYTYPE_P(0);
+    Datum      *requests;
+    bool       *requestNulls;
+    int        nrequests = ARR_SIZE(requestsArray);
 
-    char *uri;
-    char *method_str;
-    http_method method;
+    /* Request */
+    TupleDesc request_tuple_desc = typname_get_tupledesc("http", "http_request");;
+    Oid request_type = request_tuple_desc->tdtypeid;
+    int16 request_len;
+    bool request_byval;
+    char request_align;
 
-    /* Processing */
-    CURLcode err;
-    char http_error_buffer[CURL_ERROR_SIZE] = "\0";
+    get_typlenbyvalalign(request_type, &request_len, &request_byval, &request_align);
 
-    struct curl_slist *headers = NULL;
-    StringInfoData si_data;
-    StringInfoData si_headers;
-    StringInfoData si_read;
 
-    int http_return;
-    long long_status;
-    int status;
-    char *content_type = NULL;
-    int content_charset = -1;
+    deconstruct_array(requestsArray, request_type,
+                      request_len, request_byval, request_align,
+                      &requests, &requestNulls, &nrequests);
+
+    /* Response */
+    TupleDesc response_tuple_desc = typname_get_tupledesc("http", "http_response");;
+    Oid response_type = response_tuple_desc->tdtypeid;
+    int16 response_len;
+    bool response_byval;
+    char response_align;
+
+    get_typlenbyvalalign(response_type, &response_len, &response_byval, &response_align);
+
 
     /* Output */
-    HeapTuple tuple_out;
+    ArrayType   *responsesArray;
+    Datum       *responses;
 
-#if LIBCURL_VERSION_NUM >= 0x072700 /* 7.39.0 */
-    /* Set up the interrupt flag */
-    http_interrupt_requested = 0;
-#endif
+    responses = (Datum *) palloc0(nrequests * sizeof(Datum));
 
-    /* Version check */
-    http_check_curl_version(curl_version_info(CURLVERSION_NOW));
+    for (int i = 0; i < nrequests; ++i) {
+        printf("request i=%d\tis_null=%d\n", i, requestNulls[i]);
+        if (!requestNulls[i]) {
+            HeapTupleHeader reqTuple = DatumGetHeapTupleHeader(requests[i]);
+            HeapTupleData reqHeapTuple;
+            Datum req_method, req_uri, req_headers, req_content_type, req_content;
+            bool isnull;
 
-    /* We cannot handle a null request */
-    if ( ! PG_ARGISNULL(0) )
-        rec = PG_GETARG_HEAPTUPLEHEADER(0);
-    else
-    {
-        elog(ERROR, "An http_request must be provided");
-        PG_RETURN_NULL();
-    }
+            reqHeapTuple.t_len = HeapTupleHeaderGetDatumLength(reqTuple);
+            reqHeapTuple.t_data = reqTuple;
 
-    /*************************************************************************
-    * Build and run a curl request from the http_request argument
-    *************************************************************************/
+            /* Extract request attributes */
+            req_method = heap_getattr(&reqHeapTuple, 1, request_tuple_desc, &isnull);
+            req_uri = heap_getattr(&reqHeapTuple, 2, request_tuple_desc, &isnull);
+            req_headers = heap_getattr(&reqHeapTuple, 3, request_tuple_desc, &isnull);
+            req_content_type = heap_getattr(&reqHeapTuple, 4, request_tuple_desc, &isnull);
+            req_content = heap_getattr(&reqHeapTuple, 5, request_tuple_desc, &isnull);
 
-    /* Zero out static memory */
-    memset(http_error_buffer, 0, sizeof(http_error_buffer));
+            char *req_method_str = TextDatumGetCString(req_method);
+            char *req_uri_str = TextDatumGetCString(req_uri);
+            printf("request i=%d\turl=%s\n", i, req_uri_str);
 
-    /* Extract type info from the tuple itself */
-    tup_type = HeapTupleHeaderGetTypeId(rec);
-    tup_typmod = HeapTupleHeaderGetTypMod(rec);
-    tup_desc = lookup_rowtype_tupdesc(tup_type, tup_typmod);
-    ncolumns = tup_desc->natts;
+            Datum responseValues[4];
+            bool responseNulls[4] = {false, false, true, false};
 
-    /* Build a temporary HeapTuple control structure */
-    tuple.t_len = HeapTupleHeaderGetDatumLength(rec);
-    ItemPointerSetInvalid(&(tuple.t_self));
-    tuple.t_tableOid = InvalidOid;
-    tuple.t_data = rec;
+            responseValues[0] = Int32GetDatum(200);
+            responseValues[1] = CStringGetTextDatum("OK");
+            responseValues[2] = PointerGetDatum(NULL);
+            responseValues[3] = req_uri;
 
-    /* Prepare for values / nulls */
-    values = (Datum *) palloc0(ncolumns * sizeof(Datum));
-    nulls = (bool *) palloc0(ncolumns * sizeof(bool));
+            HeapTuple responseTuple = heap_form_tuple(response_tuple_desc, responseValues, responseNulls);
+            responses[i] = HeapTupleGetDatum(responseTuple);
 
-    /* Break down the tuple into values/nulls lists */
-    heap_deform_tuple(&tuple, tup_desc, values, nulls);
-
-    /* Read the URI */
-    if ( nulls[REQ_URI] )
-        elog(ERROR, "http_request.uri is NULL");
-    uri = TextDatumGetCString(values[REQ_URI]);
-
-    /* Read the method */
-    if ( nulls[REQ_METHOD] )
-        elog(ERROR, "http_request.method is NULL");
-    method_str = TextDatumGetCString(values[REQ_METHOD]);
-    method = request_type(method_str);
-    elog(DEBUG2, "pgsql-http: method_str: '%s', method: %d", method_str, method);
-
-    /* Set up global HTTP handle */
-    g_http_handle = http_get_handle();
-
-    /* Set up the error buffer */
-    CURL_SETOPT(g_http_handle, CURLOPT_ERRORBUFFER, http_error_buffer);
-
-    /* Set the target URL */
-    CURL_SETOPT(g_http_handle, CURLOPT_URL, uri);
-
-    /* Restrict to just http/https. Leaving unrestricted */
-    /* opens possibility of users requesting file:/// urls */
-    /* locally */
-    CURL_SETOPT(g_http_handle, CURLOPT_PROTOCOLS, CURLPROTO_HTTP | CURLPROTO_HTTPS);
-
-    if ( g_use_keepalive )
-    {
-        /* Keep sockets held open */
-        CURL_SETOPT(g_http_handle, CURLOPT_FORBID_REUSE, 0);
-    }
-    else
-    {
-        /* Keep sockets from being held open */
-        CURL_SETOPT(g_http_handle, CURLOPT_FORBID_REUSE, 1);
-    }
-
-    /* Set up the write-back function */
-    CURL_SETOPT(g_http_handle, CURLOPT_WRITEFUNCTION, http_writeback);
-
-    /* Set up the write-back buffer */
-    initStringInfo(&si_data);
-    initStringInfo(&si_headers);
-    CURL_SETOPT(g_http_handle, CURLOPT_WRITEDATA, (void*)(&si_data));
-    CURL_SETOPT(g_http_handle, CURLOPT_WRITEHEADER, (void*)(&si_headers));
-
-#if LIBCURL_VERSION_NUM >= 0x072700 /* 7.39.0 */
-    /* Connect the progress callback for interrupt support */
-    CURL_SETOPT(g_http_handle, CURLOPT_XFERINFOFUNCTION, http_progress_callback);
-    CURL_SETOPT(g_http_handle, CURLOPT_NOPROGRESS, 0);
-#endif
-
-    /* Set up the HTTP timeout */
-    if (g_timeout_msec > 0)
-        CURL_SETOPT(g_http_handle, CURLOPT_TIMEOUT_MS, g_timeout_msec);
-
-    /* Set the HTTP content encoding to all curl supports */
-    CURL_SETOPT(g_http_handle, CURLOPT_ACCEPT_ENCODING, "");
-
-    if ( method != HTTP_HEAD )
-    {
-        /* Follow redirects, as many as 5 */
-        CURL_SETOPT(g_http_handle, CURLOPT_FOLLOWLOCATION, 1);
-        CURL_SETOPT(g_http_handle, CURLOPT_MAXREDIRS, 5);
-    }
-
-    if ( g_use_keepalive )
-    {
-        /* Add a keep alive option to the headers to reuse network sockets */
-        headers = curl_slist_append(headers, "Connection: Keep-Alive");
-    }
-    else
-    {
-        /* Add a close option to the headers to avoid open network sockets */
-        headers = curl_slist_append(headers, "Connection: close");
-    }
-
-    /* Let our charset preference be known */
-    headers = curl_slist_append(headers, "Charsets: utf-8");
-
-    /* Handle optional headers */
-    if ( ! nulls[REQ_HEADERS] )
-    {
-        ArrayType *array = DatumGetArrayTypeP(values[REQ_HEADERS]);
-        headers = header_array_to_slist(array, headers);
-    }
-
-    /* If we have a payload we send it, assuming we're either POST, GET, PATCH, PUT or DELETE or UNKNOWN */
-    if ( ! nulls[REQ_CONTENT] && values[REQ_CONTENT] )
-    {
-        text *content_text;
-        long content_size;
-        char *cstr;
-        char buffer[1024];
-
-        /* Read the content type */
-        if ( nulls[REQ_CONTENT_TYPE] || ! values[REQ_CONTENT_TYPE] )
-            elog(ERROR, "http_request.content_type is NULL");
-        cstr = TextDatumGetCString(values[REQ_CONTENT_TYPE]);
-
-        /* Add content type to the headers */
-        snprintf(buffer, sizeof(buffer), "Content-Type: %s", cstr);
-        headers = curl_slist_append(headers, buffer);
-        pfree(cstr);
-
-        /* Read the content */
-        content_text = DatumGetTextP(values[REQ_CONTENT]);
-        content_size = VARSIZE_ANY_EXHDR(content_text);
-
-        if ( method == HTTP_GET || method == HTTP_POST || method == HTTP_DELETE )
-        {
-            /* Add the content to the payload */
-            CURL_SETOPT(g_http_handle, CURLOPT_POST, 1);
-            if ( method == HTTP_GET )
-            {
-                /* Force the verb to be GET */
-                CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, "GET");
-            }
-            else if( method == HTTP_DELETE )
-            {
-                /* Force the verb to be DELETE */
-                CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, "DELETE");
-            }
-
-            CURL_SETOPT(g_http_handle, CURLOPT_POSTFIELDS, text_to_cstring(content_text));
         }
-        else if ( method == HTTP_PUT || method == HTTP_PATCH || method == HTTP_UNKNOWN )
-        {
-            if ( method == HTTP_PATCH )
-                CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, "PATCH");
 
-            /* Assume the user knows what they are doing and pass unchanged */
-            if ( method == HTTP_UNKNOWN )
-                CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, method_str);
-
-            initStringInfo(&si_read);
-            appendBinaryStringInfo(&si_read, VARDATA(content_text), content_size);
-            CURL_SETOPT(g_http_handle, CURLOPT_UPLOAD, 1);
-            CURL_SETOPT(g_http_handle, CURLOPT_READFUNCTION, http_readback);
-            CURL_SETOPT(g_http_handle, CURLOPT_READDATA, &si_read);
-            CURL_SETOPT(g_http_handle, CURLOPT_INFILESIZE, content_size);
-        }
         else
         {
-            /* Never get here */
-            elog(ERROR, "illegal HTTP method");
+            responses[i] = (Datum) 0;
         }
     }
-    else if ( method == HTTP_DELETE )
-    {
-        CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, "DELETE");
-    }
-    else if ( method == HTTP_HEAD )
-    {
-        CURL_SETOPT(g_http_handle, CURLOPT_NOBODY, 1);
-    }
-    else if ( method == HTTP_PUT || method == HTTP_POST )
-    {
-        /* If we had a content we do not reach that part */
-        elog(ERROR, "http_request.content is NULL");
-    }
-    else if ( method == HTTP_UNKNOWN ){
-        /* Assume the user knows what they are doing and pass unchanged */
-        CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, method_str);
-    }
 
-    pfree(method_str);
-    /* Set the headers */
-    CURL_SETOPT(g_http_handle, CURLOPT_HTTPHEADER, headers);
+    responsesArray = construct_array(responses, nrequests, response_type, response_len, response_byval, response_align);
 
-    /*************************************************************************
-    * PERFORM THE REQUEST!
-    **************************************************************************/
-    http_return = curl_easy_perform(g_http_handle);
-    elog(DEBUG2, "pgsql-http: queried '%s'", uri);
-    elog(DEBUG2, "pgsql-http: http_return '%d'", http_return);
 
-    /* Clean up some input things we don't need anymore */
-    ReleaseTupleDesc(tup_desc);
-    pfree(values);
-    pfree(nulls);
+    ReleaseTupleDesc(request_tuple_desc);
+    ReleaseTupleDesc(response_tuple_desc);
 
-    /*************************************************************************
-    * Create an http_response object from the curl results
-    *************************************************************************/
-
-    /* Write out an error on failure */
-    if ( http_return != CURLE_OK )
-    {
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(g_http_handle);
-        g_http_handle = NULL;
-
-#if LIBCURL_VERSION_NUM >= 0x072700 /* 7.39.0 */
-        /*
-        * If the request was aborted by an interrupt request
-        * we need to ensure that the interrupt signal
-        * is in turn sent to the downstream interrupt handler
-        * that we stored when we set up our own handler.
-        */
-        if (http_return == CURLE_ABORTED_BY_CALLBACK &&
-            pgsql_interrupt_handler &&
-            http_interrupt_requested)
-        {
-            elog(DEBUG2, "calling pgsql_interrupt_handler");
-            (*pgsql_interrupt_handler)(http_interrupt_requested);
-            http_interrupt_requested = 0;
-            elog(ERROR, "HTTP request cancelled");
-        }
-#endif
-
-        http_error(http_return, http_error_buffer);
-    }
-
-    /* Read the metadata from the handle directly */
-    if ( (CURLE_OK != curl_easy_getinfo(g_http_handle, CURLINFO_RESPONSE_CODE, &long_status)) ||
-         (CURLE_OK != curl_easy_getinfo(g_http_handle, CURLINFO_CONTENT_TYPE, &content_type)) )
-    {
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(g_http_handle);
-        g_http_handle = NULL;
-        ereport(ERROR, (errmsg("CURL: Error in curl_easy_getinfo")));
-    }
-
-    /* Prepare our return object */
-    if (get_call_result_type(fcinfo, 0, &tup_desc) != TYPEFUNC_COMPOSITE) {
-        ereport(ERROR, (errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-                errmsg("%s called with incompatible return type", __func__)));
-    }
-
-    ncolumns = tup_desc->natts;
-    values = palloc0(sizeof(Datum)*ncolumns);
-    nulls = palloc0(sizeof(bool)*ncolumns);
-
-    /* Status code */
-    status = long_status;
-    values[RESP_STATUS] = Int32GetDatum(status);
-    nulls[RESP_STATUS] = false;
-
-    /* Content type */
-    if ( content_type )
-    {
-        List *ctl;
-        ListCell *lc;
-
-        values[RESP_CONTENT_TYPE] = CStringGetTextDatum(content_type);
-        nulls[RESP_CONTENT_TYPE] = false;
-
-        /* Read the character set name out of the content type */
-        /* if there is one in there */
-        /* text/html; charset=iso-8859-1 */
-        if ( SplitIdentifierString(pstrdup(content_type), ';', &ctl) )
-        {
-            foreach(lc, ctl)
-            {
-                /* charset=iso-8859-1 */
-                const char *param = (const char *) lfirst(lc);
-                const char *paramtype = "charset=";
-                if ( http_strcasestr(param, paramtype) )
-                {
-                    /* iso-8859-1 */
-                    const char *charset = param + strlen(paramtype);
-                    content_charset = pg_char_to_encoding(charset);
-                    break;
-                }
-            }
-        }
-    }
-    else
-    {
-        values[RESP_CONTENT_TYPE] = (Datum)0;
-        nulls[RESP_CONTENT_TYPE] = true;
-    }
-
-    /* Headers array */
-    if ( si_headers.len )
-    {
-        /* Strip the carriage-returns, because who cares? */
-        string_info_remove_cr(&si_headers);
-        values[RESP_HEADERS] = PointerGetDatum(header_string_to_array(&si_headers));
-        nulls[RESP_HEADERS] = false;
-    }
-    else
-    {
-        values[RESP_HEADERS] = (Datum)0;
-        nulls[RESP_HEADERS] = true;
-    }
-
-    /* Content */
-    if ( si_data.len )
-    {
-        char *content_str;
-        size_t content_len;
-        elog(DEBUG2, "pgsql-http: content_charset = %d", content_charset);
-
-        /* Apply character transcoding if necessary */
-        if ( content_charset < 0 )
-        {
-            content_str = si_data.data;
-            content_len = si_data.len;
-        }
-        else
-        {
-            content_str = pg_any_to_server(si_data.data, si_data.len, content_charset);
-            content_len = strlen(content_str);
-        }
-
-        values[RESP_CONTENT] = PointerGetDatum(cstring_to_text_with_len(content_str, content_len));
-        nulls[RESP_CONTENT] = false;
-    }
-    else
-    {
-        values[RESP_CONTENT] = (Datum)0;
-        nulls[RESP_CONTENT] = true;
-    }
-
-    /* Build up a tuple from values/nulls lists */
-    tuple_out = heap_form_tuple(tup_desc, values, nulls);
-
-    /* Clean up */
-    ReleaseTupleDesc(tup_desc);
-    if ( !g_use_keepalive )
-    {
-        curl_easy_cleanup(g_http_handle);
-        g_http_handle = NULL;
-    }
-    curl_slist_free_all(headers);
-    pfree(si_headers.data);
-    pfree(si_data.data);
-    pfree(values);
-    pfree(nulls);
-
-    /* Return */
-    PG_RETURN_DATUM(HeapTupleGetDatum(tuple_out));
+    pfree(responses);
+    PG_RETURN_ARRAYTYPE_P(responsesArray);
 }
+
 
 
 

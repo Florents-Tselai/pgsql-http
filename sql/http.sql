@@ -156,6 +156,9 @@ SELECT (http_get_log('https://httpbun.org/status/202', true, '{"plan": "my"}')).
 
 SELECT * from _http_pages;
 
-SELECT status,
-       content::json->'url' AS url
-FROM http_get_many('https://httpbun.org/redirect-to?url=get');
+SELECT http_many(ARRAY[
+    ('GET', 'http://a.com', NULL, NULL, NULL)::http_request,
+    ('GET', 'http://b.com', NULL, NULL, NULL)::http_request
+    ]);
+
+Select http_get_many(array['http://a.com', 'http://b.com']);

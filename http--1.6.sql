@@ -195,12 +195,14 @@ RETURN response;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE FUNCTION http_many(request @extschema@.http_request)
-    RETURNS http_response
+CREATE FUNCTION http_many(request @extschema@.http_request[])
+    RETURNS @extschema@.http_response[]
 AS 'MODULE_PATHNAME', 'http_request_many'
     LANGUAGE 'c';
 
-CREATE FUNCTION http_get_many(uri VARCHAR)
-    RETURNS http_response
-    AS $$ SELECT @extschema@.http_many(('GET', $1, NULL, NULL, NULL)::@extschema@.http_request) $$
-                    LANGUAGE 'sql';
+CREATE FUNCTION http_get_many(uri VARCHAR[])
+    RETURNS @extschema@.http_response[]
+    AS $$
+SELECT http_many(array_agg(ROW('GET', u, NULL, NULL, NULL)::@extschema@.http_request))
+FROM unnest($1) AS u
+    $$ LANGUAGE sql;
