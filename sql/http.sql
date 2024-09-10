@@ -155,3 +155,7 @@ SELECT * from _http_crawl_plans;
 SELECT (http_get_log('https://httpbun.org/status/202', true, '{"plan": "my"}')).status;
 
 SELECT * from _http_pages;
+
+SELECT status,
+       content::json->'url' AS url
+FROM http_get_many('https://httpbun.org/redirect-to?url=get');

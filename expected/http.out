@@ -262,3 +262,11 @@ SELECT * from _http_pages;
   3 | GET        | https://httpbun.org/status/202 |             |                  |             |         202 |                   |              |              | {"plan": "my"} |                 
 (3 rows)
 
+SELECT status,
+       content::json->'url' AS url
+FROM http_get_many('https://httpbun.org/redirect-to?url=get');
+ status |            url            
+--------+---------------------------
+    200 | "https://httpbun.org/get"
+(1 row)
+
