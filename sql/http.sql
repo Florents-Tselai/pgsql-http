@@ -152,6 +152,6 @@ SELECT sp_create_crawl_plan('plan1', 'http://example.com', 'http://another.com')
 
 SELECT * from _http_crawl_plans;
 
-SELECT (http_get('https://httpbun.org/status/202', true, '{"plan": "my"}')).status;
+SELECT (http_get_log('https://httpbun.org/status/202', true, '{"plan": "my"}')).status;
 
 SELECT * from _http_pages;

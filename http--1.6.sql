@@ -170,7 +170,7 @@ CREATE FUNCTION sp_create_crawl_plan(plan_name text, variadic urls text[])
     RETURNING id;
 $$;
 
-CREATE FUNCTION http_get(uri VARCHAR, logged boolean default false, metadata jsonb default null)
+CREATE FUNCTION http_get_log(uri VARCHAR, logged boolean default true, metadata jsonb default null)
     RETURNS http_response
 AS $$
 DECLARE

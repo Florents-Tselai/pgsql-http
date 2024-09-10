@@ -9,10 +9,11 @@ SELECT http_set_curlopt('CURLOPT_TIMEOUT', '10');
 -- Status code
 SELECT status
 FROM http_get('https://httpbun.org/status/202');
-ERROR:  function http_get(unknown) is not unique
-LINE 2: FROM http_get('https://httpbun.org/status/202');
-             ^
-HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
+ status 
+--------
+    202
+(1 row)
+
 -- Headers
 SELECT lower(field) AS field, value
 FROM (
@@ -20,20 +21,22 @@ FROM (
 	FROM http_get('https://httpbun.org/response-headers?Abcde=abcde')
 ) a
 WHERE field ILIKE 'Abcde';
-ERROR:  function http_get(unknown) is not unique
-LINE 4:  FROM http_get('https://httpbun.org/response-headers?Abcde=a...
-              ^
-HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
+ field | value 
+-------+-------
+ abcde | abcde
+(1 row)
+
 -- GET
 SELECT status,
 content::json->'args'->>'foo' AS args,
 content::json->'url' AS url,
 content::json->'method' AS method
 FROM http_get('https://httpbun.org/anything?foo=bar');
-ERROR:  function http_get(unknown) is not unique
-LINE 5: FROM http_get('https://httpbun.org/anything?foo=bar');
-             ^
-HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
+ status | args |                  url                   | method 
+--------+------+----------------------------------------+--------
+    200 | bar  | "https://httpbun.org/anything?foo=bar" | "GET"
+(1 row)
+
 -- GET with data
 SELECT status,
 content::json->'args'->>'this' AS args,
@@ -155,10 +158,11 @@ WHERE field ILIKE 'Abcde';
 SELECT status,
 content::json->'url' AS url
 FROM http_get('https://httpbun.org/redirect-to?url=get');
-ERROR:  function http_get(unknown) is not unique
-LINE 3: FROM http_get('https://httpbun.org/redirect-to?url=get');
-             ^
-HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
+ status |            url            
+--------+---------------------------
+    200 | "https://httpbun.org/get"
+(1 row)
+
 -- Request image
 WITH
   http AS (
@@ -172,10 +176,11 @@ SELECT
   length(text_to_bytea(http.content)) AS length_binary
 FROM http, headers
 WHERE field ilike 'Content-Type';
-ERROR:  function http_get(unknown) is not unique
-LINE 3:     SELECT * FROM http_get('https://httpbingo.org/image/png'...
-                          ^
-HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
+ content_type | length_binary 
+--------------+---------------
+ image/png    |          8090
+(1 row)
+
 -- Alter options and and reset them and throw errors
 SELECT http_set_curlopt('CURLOPT_PROXY', '127.0.0.1');
  http_set_curlopt 
@@ -212,10 +217,11 @@ SELECT http_reset_curlopt();
 
 -- Now it should work
 SELECT status FROM http_get('https://httpbun.org/status/555');
-ERROR:  function http_get(unknown) is not unique
-LINE 1: SELECT status FROM http_get('https://httpbun.org/status/555'...
-                           ^
-HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
+ status 
+--------
+    555
+(1 row)
+
 -- Alter the default timeout and then run a query that is longer than
 -- the default (5s), but shorter than the new timeout
 SELECT http_set_curlopt('CURLOPT_TIMEOUT_MS', '10000');
@@ -225,10 +231,11 @@ SELECT http_set_curlopt('CURLOPT_TIMEOUT_MS', '10000');
 (1 row)
 
 SELECT status FROM http_get('https://httpbun.org/delay/7');
-ERROR:  function http_get(unknown) is not unique
-LINE 1: SELECT status FROM http_get('https://httpbun.org/delay/7');
-                           ^
-HINT:  Could not choose a best candidate function. You might need to add explicit type casts.
+ status 
+--------
+    200
+(1 row)
+
 SELECT sp_create_crawl_plan('plan1', 'http://example.com', 'http://another.com');
  sp_create_crawl_plan 
 ----------------------
@@ -241,7 +248,7 @@ SELECT * from _http_crawl_plans;
   1 | plan1
 (1 row)
 
-SELECT (http_get('https://httpbun.org/status/202', true, '{"plan": "my"}')).status;
+SELECT (http_get_log('https://httpbun.org/status/202', true, '{"plan": "my"}')).status;
  status 
 --------
     202
