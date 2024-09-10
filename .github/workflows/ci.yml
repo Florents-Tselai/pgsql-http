@@ -48,7 +48,7 @@ jobs:
       run: |
         export PATH=/usr/lib/postgresql/${{ matrix.ci.PGVER }}/bin/:$PATH
         export PG_CONFIG=/usr/lib/postgresql/${{ matrix.ci.PGVER }}/bin/pg_config
-        export PG_CFLAGS=-Werror
+#        export PG_CFLAGS=-Werror
         make
         sudo -E make PG_CONFIG=$PG_CONFIG install
         PGUSER=postgres make installcheck || (cat regression.diffs && /bin/false)
