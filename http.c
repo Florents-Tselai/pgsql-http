@@ -138,6 +138,16 @@ typedef struct {
 	bool superuser_only;
 } http_curlopt;
 
+typedef struct {
+	char *uri;
+	char *method_str;
+	http_method method;
+} typ_http_request;
+
+typ_http_request *DatumToTypeHttpRequest(Datum d);
+
+#define DatumGetHttpRequestP(X)		(DatumToTypeHttpRequest(PG_DETOAST_DATUM(X)))
+
 
 /* CURLOPT values we allow user to set at run-time */
 /* Be careful adding these, as they can be a security risk */
@@ -986,6 +996,53 @@ Datum http_set_curlopt(PG_FUNCTION_ARGS)
 }
 
 
+typ_http_request *DatumToTypeHttpRequest(Datum d) {
+	HeapTupleHeader rec;
+	HeapTupleData tuple;
+	Oid tup_type;
+	int32 tup_typmod;
+	TupleDesc tup_desc;
+	int ncolumns;
+	Datum *values;
+	bool *nulls;
+	typ_http_request *req= palloc0(sizeof(typ_http_request));
+
+	/* Extract type info from the tuple itself */
+	tup_type = HeapTupleHeaderGetTypeId(rec);
+	tup_typmod = HeapTupleHeaderGetTypMod(rec);
+	tup_desc = lookup_rowtype_tupdesc(tup_type, tup_typmod);
+	ncolumns = tup_desc->natts;
+
+	/* Build a temporary HeapTuple control structure */
+	tuple.t_len = HeapTupleHeaderGetDatumLength(rec);
+	ItemPointerSetInvalid(&(tuple.t_self));
+	tuple.t_tableOid = InvalidOid;
+	tuple.t_data = rec;
+
+	/* Prepare for values / nulls */
+	values = (Datum *) palloc0(ncolumns * sizeof(Datum));
+	nulls = (bool *) palloc0(ncolumns * sizeof(bool));
+
+	/* Break down the tuple into values/nulls lists */
+	heap_deform_tuple(&tuple, tup_desc, values, nulls);
+
+	/* Read the URI */
+	if ( nulls[REQ_URI] )
+		elog(ERROR, "http_request.uri is NULL");
+	req->uri = TextDatumGetCString(values[REQ_URI]);
+
+	/* Read the method */
+	if ( nulls[REQ_METHOD] )
+		elog(ERROR, "http_request.method is NULL");
+	req->method_str = TextDatumGetCString(values[REQ_METHOD]);
+	req->method = request_type(req->method_str);
+	elog(DEBUG2, "pgsql-http: method_str: '%s', method: %d", req->method_str, req->method);
+
+
+
+	return req;
+};
+
 /**
 * Master HTTP request function, takes in an http_request tuple and outputs
 * an http_response tuple.
@@ -995,18 +1052,20 @@ PG_FUNCTION_INFO_V1(http_request);
 Datum http_request(PG_FUNCTION_ARGS)
 {
 	/* Input */
-	HeapTupleHeader rec;
-	HeapTupleData tuple;
-	Oid tup_type;
-	int32 tup_typmod;
-	TupleDesc tup_desc;
-	int ncolumns;
-	Datum *values;
-	bool *nulls;
+	// HeapTupleHeader rec;
+	// HeapTupleData tuple;
+	// Oid tup_type;
+	// int32 tup_typmod;
+	// TupleDesc tup_desc;
+	// int ncolumns;
+	// Datum *values;
+	// bool *nulls;
 
-	char *uri;
-	char *method_str;
-	http_method method;
+	// char *uri;
+	// char *method_str;
+	// http_method method;
+
+	typ_http_request *req = palloc0(sizeof(typ_http_request));
 
 	/* Processing */
 	CURLcode err;
@@ -1035,13 +1094,13 @@ Datum http_request(PG_FUNCTION_ARGS)
 	http_check_curl_version(curl_version_info(CURLVERSION_NOW));
 
 	/* We cannot handle a null request */
-	if ( ! PG_ARGISNULL(0) )
-		rec = PG_GETARG_HEAPTUPLEHEADER(0);
-	else
-	{
-		elog(ERROR, "An http_request must be provided");
-		PG_RETURN_NULL();
-	}
+	// if ( ! PG_ARGISNULL(0) )
+	// 	rec = PG_GETARG_HEAPTUPLEHEADER(0);
+	// else
+	// {
+	// 	elog(ERROR, "An http_request must be provided");
+	// 	PG_RETURN_NULL();
+	// }
 
 	/*************************************************************************
 	* Build and run a curl request from the http_request argument
@@ -1050,36 +1109,7 @@ Datum http_request(PG_FUNCTION_ARGS)
 	/* Zero out static memory */
 	memset(http_error_buffer, 0, sizeof(http_error_buffer));
 
-	/* Extract type info from the tuple itself */
-	tup_type = HeapTupleHeaderGetTypeId(rec);
-	tup_typmod = HeapTupleHeaderGetTypMod(rec);
-	tup_desc = lookup_rowtype_tupdesc(tup_type, tup_typmod);
-	ncolumns = tup_desc->natts;
 
-	/* Build a temporary HeapTuple control structure */
-	tuple.t_len = HeapTupleHeaderGetDatumLength(rec);
-	ItemPointerSetInvalid(&(tuple.t_self));
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_data = rec;
-
-	/* Prepare for values / nulls */
-	values = (Datum *) palloc0(ncolumns * sizeof(Datum));
-	nulls = (bool *) palloc0(ncolumns * sizeof(bool));
-
-	/* Break down the tuple into values/nulls lists */
-	heap_deform_tuple(&tuple, tup_desc, values, nulls);
-
-	/* Read the URI */
-	if ( nulls[REQ_URI] )
-		elog(ERROR, "http_request.uri is NULL");
-	uri = TextDatumGetCString(values[REQ_URI]);
-
-	/* Read the method */
-	if ( nulls[REQ_METHOD] )
-		elog(ERROR, "http_request.method is NULL");
-	method_str = TextDatumGetCString(values[REQ_METHOD]);
-	method = request_type(method_str);
-	elog(DEBUG2, "pgsql-http: method_str: '%s', method: %d", method_str, method);
 
 	/* Set up global HTTP handle */
 	g_http_handle = http_get_handle();
@@ -1088,7 +1118,7 @@ Datum http_request(PG_FUNCTION_ARGS)
 	CURL_SETOPT(g_http_handle, CURLOPT_ERRORBUFFER, http_error_buffer);
 
 	/* Set the target URL */
-	CURL_SETOPT(g_http_handle, CURLOPT_URL, uri);
+	CURL_SETOPT(g_http_handle, CURLOPT_URL, req->uri);
 
 	/* Restrict to just http/https. Leaving unrestricted */
 	/* opens possibility of users requesting file:/// urls */
@@ -1128,7 +1158,7 @@ Datum http_request(PG_FUNCTION_ARGS)
 	/* Set the HTTP content encoding to all curl supports */
 	CURL_SETOPT(g_http_handle, CURLOPT_ACCEPT_ENCODING, "");
 
-	if ( method != HTTP_HEAD )
+	if ( req->method != HTTP_HEAD )
 	{
 		/* Follow redirects, as many as 5 */
 		CURL_SETOPT(g_http_handle, CURLOPT_FOLLOWLOCATION, 1);
@@ -1178,16 +1208,16 @@ Datum http_request(PG_FUNCTION_ARGS)
 		content_text = DatumGetTextP(values[REQ_CONTENT]);
 		content_size = VARSIZE_ANY_EXHDR(content_text);
 
-		if ( method == HTTP_GET || method == HTTP_POST || method == HTTP_DELETE )
+		if ( req->method == HTTP_GET || req->method == HTTP_POST || req->method == HTTP_DELETE )
 		{
 			/* Add the content to the payload */
 			CURL_SETOPT(g_http_handle, CURLOPT_POST, 1);
-			if ( method == HTTP_GET )
+			if ( req->method == HTTP_GET )
 			{
 				/* Force the verb to be GET */
 				CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, "GET");
 			}
-			else if( method == HTTP_DELETE )
+			else if( req->method == HTTP_DELETE )
 			{
 				/* Force the verb to be DELETE */
 				CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, "DELETE");
@@ -1195,14 +1225,14 @@ Datum http_request(PG_FUNCTION_ARGS)
 
 			CURL_SETOPT(g_http_handle, CURLOPT_POSTFIELDS, text_to_cstring(content_text));
 		}
-		else if ( method == HTTP_PUT || method == HTTP_PATCH || method == HTTP_UNKNOWN )
+		else if ( req->method == HTTP_PUT || req->method == HTTP_PATCH || req->method == HTTP_UNKNOWN )
 		{
-			if ( method == HTTP_PATCH )
+			if ( req->method == HTTP_PATCH )
 				CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, "PATCH");
 
 			/* Assume the user knows what they are doing and pass unchanged */
-			if ( method == HTTP_UNKNOWN )
-				CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, method_str);
+			if ( req->method == HTTP_UNKNOWN )
+				CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, req->method_str);
 
 			initStringInfo(&si_read);
 			appendBinaryStringInfo(&si_read, VARDATA(content_text), content_size);
@@ -1217,25 +1247,25 @@ Datum http_request(PG_FUNCTION_ARGS)
 			elog(ERROR, "illegal HTTP method");
 		}
 	}
-	else if ( method == HTTP_DELETE )
+	else if ( req->method == HTTP_DELETE )
 	{
 		CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, "DELETE");
 	}
-	else if ( method == HTTP_HEAD )
+	else if ( req->method == HTTP_HEAD )
 	{
 		CURL_SETOPT(g_http_handle, CURLOPT_NOBODY, 1);
 	}
-	else if ( method == HTTP_PUT || method == HTTP_POST )
+	else if ( req->method == HTTP_PUT || req->method == HTTP_POST )
 	{
 		/* If we had a content we do not reach that part */
 		elog(ERROR, "http_request.content is NULL");
 	}
-	else if ( method == HTTP_UNKNOWN ){
+	else if ( req->method == HTTP_UNKNOWN ){
 		/* Assume the user knows what they are doing and pass unchanged */
-		CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, method_str);
+		CURL_SETOPT(g_http_handle, CURLOPT_CUSTOMREQUEST, req->method_str);
 	}
 
-	pfree(method_str);
+	pfree(req->method_str);
 	/* Set the headers */
 	CURL_SETOPT(g_http_handle, CURLOPT_HTTPHEADER, headers);
 
@@ -1243,7 +1273,7 @@ Datum http_request(PG_FUNCTION_ARGS)
 	* PERFORM THE REQUEST!
 	**************************************************************************/
 	http_return = curl_easy_perform(g_http_handle);
-	elog(DEBUG2, "pgsql-http: queried '%s'", uri);
+	elog(DEBUG2, "pgsql-http: queried '%s'", req->uri);
 	elog(DEBUG2, "pgsql-http: http_return '%d'", http_return);
 
 	/* Clean up some input things we don't need anymore */
@@ -1395,6 +1425,7 @@ Datum http_request(PG_FUNCTION_ARGS)
 		curl_easy_cleanup(g_http_handle);
 		g_http_handle = NULL;
 	}
+	pfree(req);
 	curl_slist_free_all(headers);
 	pfree(si_headers.data);
 	pfree(si_data.data);
