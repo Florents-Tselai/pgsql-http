@@ -59,6 +59,7 @@
 #include <utils/builtins.h>
 #include <utils/catcache.h>
 #include <utils/jsonb.h>
+#include <utils/jsonfuncs.h>
 #include <utils/lsyscache.h>
 #include <utils/syscache.h>
 #include <utils/typcache.h>
@@ -1627,6 +1628,143 @@ Datum text_to_bytea(PG_FUNCTION_ARGS)
 	memcpy(b, t, VARSIZE(t));
 	PG_RETURN_TEXT_P(b);
 }
+
+typedef struct pg_http_request {
+	char *uri;
+	char *method_str;
+	http_method method;
+	struct curl_slist *headers;
+
+	text *content_text;
+	long content_size;
+	char *cstr;
+	char buffer[1024];
+
+} pg_http_request;
+
+#include "utils/jsonfuncs.h"
+
+Datum http_struct(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(http_struct);
+Datum http_struct(PG_FUNCTION_ARGS)
+{
+	/* Input */
+	Datum arg0;
+	HeapTupleHeader reqTupleHeader;
+	HeapTupleData reqTupleData;
+
+	pg_http_request *req = palloc0(sizeof(pg_http_request));
+
+	/* We cannot handle a null request */
+	if ( ! PG_ARGISNULL(0) ) {
+		arg0 = PG_GETARG_DATUM(0);
+		reqTupleHeader = DatumGetHeapTupleHeader(arg0);
+	}
+	else
+	{
+		elog(ERROR, "An http_request must be provided");
+		PG_RETURN_NULL();
+	}
+
+	/*************************************************************************
+	* Build and run a curl request from the http_request argument
+	*************************************************************************/
+
+	/* Extract type info from the tuple itself */
+	Oid reqOid = HeapTupleHeaderGetTypeId(reqTupleHeader);
+	int32 reqTypeMod = HeapTupleHeaderGetTypMod(reqTupleHeader);
+	TupleDesc reqTupleDesc = lookup_rowtype_tupdesc(reqOid, reqTypeMod);
+	int reqNumAttrs = reqTupleDesc->natts;
+
+	/* Build a temporary HeapTuple control structure */
+	reqTupleData.t_len = HeapTupleHeaderGetDatumLength(reqTupleHeader);
+	ItemPointerSetInvalid(&(reqTupleData.t_self));
+	reqTupleData.t_tableOid = InvalidOid;
+	reqTupleData.t_data = reqTupleHeader;
+
+	/* Prepare for values / nulls */
+	Datum *reqValues = (Datum *) palloc0(reqNumAttrs * sizeof(Datum));
+	bool *reqNulls = (bool *) palloc0(reqNumAttrs * sizeof(bool));
+
+	/* Break down the tuple into values/nulls lists */
+	heap_deform_tuple(&reqTupleData, reqTupleDesc, reqValues, reqNulls);
+
+	/* Read the URI */
+	if ( reqNulls[REQ_URI] )
+		elog(ERROR, "http_request.uri is NULL");
+	req->uri = TextDatumGetCString(reqValues[REQ_URI]);
+
+	/* Read the method */
+	if ( reqNulls[REQ_METHOD] )
+		elog(ERROR, "http_request.method is NULL");
+	req->method_str = TextDatumGetCString(reqValues[REQ_METHOD]);
+	req->method = request_type(req->method_str);
+	elog(DEBUG2, "pgsql-http: method_str: '%s', method: %d", req->method_str, req->method);
+
+	if ( g_use_keepalive )
+	{
+		/* Add a keep alive option to the headers to reuse network sockets */
+		req->headers = curl_slist_append(req->headers, "Connection: Keep-Alive");
+	}
+	else
+	{
+		/* Add a close option to the headers to avoid open network sockets */
+		req->headers = curl_slist_append(req->headers, "Connection: close");
+	}
+
+	/* Let our charset preference be known */
+	req->headers = curl_slist_append(req->headers, "Charsets: utf-8");
+
+	/* Handle optional headers */
+	if ( ! reqNulls[REQ_HEADERS] )
+	{
+		ArrayType *array = DatumGetArrayTypeP(reqValues[REQ_HEADERS]);
+		req->headers = header_array_to_slist(array, req->headers);
+	}
+
+	/* If we have a payload we send it, assuming we're either POST, GET, PATCH, PUT or DELETE or UNKNOWN */
+	if ( ! reqNulls[REQ_CONTENT] && reqValues[REQ_CONTENT] )
+	{
+		/* Read the content type */
+		if ( reqNulls[REQ_CONTENT_TYPE] || ! reqValues[REQ_CONTENT_TYPE] )
+			elog(ERROR, "http_request.content_type is NULL");
+		req->cstr = TextDatumGetCString(reqValues[REQ_CONTENT_TYPE]);
+
+		/* Add content type to the headers */
+		snprintf(req->buffer, sizeof(req->buffer), "Content-Type: %s", req->cstr);
+		req->headers = curl_slist_append(req->headers, req->buffer);
+		pfree(req->cstr);
+
+		/* Read the content */
+		req->content_text = DatumGetTextP(reqValues[REQ_CONTENT]);
+		req->content_size = VARSIZE_ANY_EXHDR(req->content_text);
+
+	}
+
+	/* Clean up */
+	ReleaseTupleDesc(reqTupleDesc);
+	if ( !g_use_keepalive )
+	{
+		curl_easy_cleanup(g_http_handle);
+		g_http_handle = NULL;
+	}
+	curl_slist_free_all(req->headers);
+
+	pfree(reqValues);
+	pfree(reqNulls);
+
+	Datum dats[2];
+	dats[0] = CStringGetTextDatum("url");
+	dats[1] = CStringGetTextDatum("this");
+
+	Datum nulls[2] = {BoolGetDatum(false), BoolGetDatum(false)};
+	Oid oids[2] = {TEXTOID, TEXTOID};
+
+	Datum arr = jsonb_build_object_worker(2, dats, nulls, oids, false, false);;
+	PG_RETURN_DATUM(arr);
+
+}
+
 
 
 // Local Variables:

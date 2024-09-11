@@ -129,3 +129,8 @@ CREATE FUNCTION bytea_to_text(data BYTEA)
     AS 'MODULE_PATHNAME', 'bytea_to_text'
     LANGUAGE 'c'
     IMMUTABLE STRICT;
+
+CREATE FUNCTION http_struct(request @extschema@.http_request)
+    RETURNS jsonb
+AS 'MODULE_PATHNAME', 'http_struct'
+    LANGUAGE 'c';
