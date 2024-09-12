@@ -5,7 +5,7 @@ EXTENSION = http
 
 DATA = $(wildcard *.sql)
 
-REGRESS = struct
+REGRESS = http struct
 EXTRA_CLEAN =
 
 CURL_CONFIG = curl-config

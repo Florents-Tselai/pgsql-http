@@ -1642,35 +1642,12 @@ typedef struct pg_http_request {
 
 } pg_http_request;
 
-#include "utils/jsonfuncs.h"
-
-Datum http_struct(PG_FUNCTION_ARGS);
-PG_FUNCTION_INFO_V1(http_struct);
-Datum http_struct(PG_FUNCTION_ARGS)
-{
-	/* Input */
-	Datum arg0;
-	HeapTupleHeader reqTupleHeader;
+pg_http_request* DatumToHttpRequestP(Datum arg0) {
+	HeapTupleHeader reqTupleHeader = DatumGetHeapTupleHeader(arg0);;
 	HeapTupleData reqTupleData;
 
 	pg_http_request *req = palloc0(sizeof(pg_http_request));
 
-	/* We cannot handle a null request */
-	if ( ! PG_ARGISNULL(0) ) {
-		arg0 = PG_GETARG_DATUM(0);
-		reqTupleHeader = DatumGetHeapTupleHeader(arg0);
-	}
-	else
-	{
-		elog(ERROR, "An http_request must be provided");
-		PG_RETURN_NULL();
-	}
-
-	/*************************************************************************
-	* Build and run a curl request from the http_request argument
-	*************************************************************************/
-
-	/* Extract type info from the tuple itself */
 	Oid reqOid = HeapTupleHeaderGetTypeId(reqTupleHeader);
 	int32 reqTypeMod = HeapTupleHeaderGetTypMod(reqTupleHeader);
 	TupleDesc reqTupleDesc = lookup_rowtype_tupdesc(reqOid, reqTypeMod);
@@ -1753,12 +1730,27 @@ Datum http_struct(PG_FUNCTION_ARGS)
 	pfree(reqValues);
 	pfree(reqNulls);
 
-	Datum dats[2];
-	dats[0] = CStringGetTextDatum("url");
-	dats[1] = CStringGetTextDatum("this");
+	return req;
+}
 
-	Datum nulls[2] = {BoolGetDatum(false), BoolGetDatum(false)};
-	Oid oids[2] = {TEXTOID, TEXTOID};
+#define PG_GETARG_HTTP_REQUEST_P(n)	DatumToHttpRequestP(PG_GETARG_DATUM(n))
+
+Datum http_struct(PG_FUNCTION_ARGS);
+PG_FUNCTION_INFO_V1(http_struct);
+Datum http_struct(PG_FUNCTION_ARGS)
+{
+	pg_http_request *req = PG_GETARG_HTTP_REQUEST_P(0);
+
+	Datum dats[2] = {
+		CStringGetTextDatum("uri"),
+		CStringGetTextDatum(req->uri)
+	};
+
+	Datum nulls[2] = {
+		BoolGetDatum(false),
+		BoolGetDatum(false)
+	};
+	Oid oids[10] = {TEXTOID, TEXTOID};
 
 	Datum arr = jsonb_build_object_worker(2, dats, nulls, oids, false, false);;
 	PG_RETURN_DATUM(arr);
