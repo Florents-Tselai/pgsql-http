@@ -131,6 +131,11 @@ CREATE FUNCTION bytea_to_text(data BYTEA)
     IMMUTABLE STRICT;
 
 CREATE FUNCTION http_struct(request @extschema@.http_request)
-    RETURNS jsonb
+    RETURNS http_response
 AS 'MODULE_PATHNAME', 'http_struct'
     LANGUAGE 'c';
+
+CREATE FUNCTION http_struct_get(uri VARCHAR)
+    RETURNS http_response
+AS $$ SELECT @extschema@.http_struct(('GET', $1, NULL, NULL, NULL)::@extschema@.http_request) $$
+          LANGUAGE 'sql';
