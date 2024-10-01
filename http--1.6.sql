@@ -129,3 +129,51 @@ CREATE FUNCTION bytea_to_text(data BYTEA)
     AS 'MODULE_PATHNAME', 'bytea_to_text'
     LANGUAGE 'c'
     IMMUTABLE STRICT;
+
+CREATE TABLE __http_cache(
+    id serial primary key,
+
+    created_at timestamp default now(),
+
+    req_method @extschema@.http_method,
+    req_uri VARCHAR,
+    req_headers @extschema@.http_header[],
+    req_content_type VARCHAR,
+    req_content VARCHAR,
+
+    resp_status INTEGER,
+    resp_content_type VARCHAR,
+    resp_headers @extschema@.http_header[],
+    resp_content VARCHAR
+);
+
+CREATE OR REPLACE FUNCTION __http_cache_request_response(
+    req @extschema@.http_request,
+    resp @extschema@.http_response
+)
+RETURNS VOID
+AS $$
+    INSERT INTO __http_cache (
+        req_method,
+        req_uri,
+        req_headers,
+        req_content_type,
+        req_content,
+        resp_status,
+        resp_content_type,
+        resp_headers,
+        resp_content
+    )
+SELECT
+    req.method,
+    req.uri,
+    req.headers,
+    req.content_type,
+    req.content,
+    resp.status,
+    resp.content_type,
+    resp.headers,
+    resp.content;
+$$
+LANGUAGE SQL;
+

@@ -147,3 +147,6 @@ SELECT status FROM http_get('https://httpbin.org/status/555');
 -- the default (5s), but shorter than the new timeout
 SELECT http_set_curlopt('CURLOPT_TIMEOUT_MS', '10000');
 SELECT status FROM http_get('https://httpbin.org/delay/7');
+
+-- Cache
+SELECT * FROM __http_cache;

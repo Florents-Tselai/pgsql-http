@@ -64,6 +64,7 @@
 #include <utils/typcache.h>
 #include <utils/fmgroids.h>
 #include <utils/guc.h>
+#include <executor/spi.h>
 
 #if PG_VERSION_NUM >= 90300
 #  include <access/htup_details.h>
@@ -1419,6 +1420,37 @@ Datum http_request(PG_FUNCTION_ARGS)
 
 	/* Build up a tuple from values/nulls lists */
 	tuple_out = heap_form_tuple(tup_desc, values, nulls);
+
+	bool do_cache = true;
+
+	if ( do_cache )
+	{
+		/* Start SPI execution */
+		if (SPI_connect() != SPI_OK_CONNECT) {
+			elog(ERROR, "SPI_connect failed");
+		}
+
+		/* Execute the SQL query */
+		int nargs = 2;
+		const char *query = "INSERT INTO __http_cache(resp_status, resp_content) SELECT $1, $2";
+		Oid oids[2];
+		oids[0] = INT8OID;
+		oids[1] = TEXTOID;
+		Datum *cache_values = palloc0(sizeof(Datum)*nargs);
+		cache_values[0] = (Datum) 200;
+		cache_values[1]	= values[RESP_CONTENT];
+		int ret = SPI_execute_with_args(query, nargs, oids, cache_values, "  ", false, 1);
+
+		/* Check if the execution was successful */
+		if (ret != SPI_OK_INSERT) {
+			elog(ERROR, "SPI_execute failed: error code %d", ret);
+		}
+
+		/* Finish the SPI execution */
+		if (SPI_finish() != SPI_OK_FINISH) {
+			elog(ERROR, "SPI_finish failed");
+		}
+	}
 
 	/* Clean up */
 	ReleaseTupleDesc(tup_desc);
